@@ -20,7 +20,7 @@
 -behaviour(gen_mod).
 
 %% gen_mod callbacks
--export([start/2, stop/1, intercept_packet/1]).
+-export([start/2, stop/1, intercept_packet/1, depends/2, mod_options/1]).
 
 -include("xmpp.hrl").
 -include("logger.hrl").
@@ -39,6 +39,12 @@ stop(_Host) ->
     ejabberd_hooks:delete(user_send_packet, _Host, ?MODULE,
 		       intercept_packet, 88).
 
+depends(_Host, _Opts) ->
+    [].
+
+mod_options(_Host) ->
+    [].
+
 intercept_packet(Pkt) ->
 	lager:log(info, self(), "Intercepting each packet in sawerly_message_interceptor. PacketPP ~p", [Pkt]),
 	
@@ -51,11 +57,11 @@ intercept_packet(Pkt) ->
 			Pkt
 	end.
 	
-parse_and_process_chat_message({#message{id = Id, from = From, to = To, body = Body} = Pkt, #{jid := JID} = C2SState}) -> 
+parse_and_process_chat_message({#message{id = _Id, from = From, to = To, body = Body} = Pkt, #{jid := JID} = C2SState}) -> 
 %parse_and_process_chat_message({#id = Id, from = From, to = To, body = Body}, JID, C2SState) ->
 	lager:log(info, self(), "inside parse_and_process_chat_message method"),
 	Sender = binary_to_list(From#jid.luser),
-    LServer = binary_to_list(JID#jid.lserver),
+    _ = binary_to_list(JID#jid.lserver),
     Receiver = binary_to_list(To#jid.luser),
     
     Text = binary_to_list(element(3,lists:nth(1, Body))),
@@ -64,7 +70,7 @@ parse_and_process_chat_message({#message{id = Id, from = From, to = To, body = B
     lager:log(info, self(), "From: ~p & To: ~p & message: ~p", [Sender, Receiver, Text]),
 
     case re:run(Text, ?MOBILE_NUMBER_REGEX) of
-    	{match, Captured} -> 
+    	{match, _Captured} -> 
     		lager:log(info, self(), "Found contact number in the message text! Message: ~p ", [Text]),
     		NewPkt = construct_modified_packet_with_empty_text(Pkt, Body),
     		proceed_with_modified_message(NewPkt, C2SState);
@@ -79,16 +85,8 @@ proceed_with_modified_message(Pkt, C2SState) ->
 construct_modified_packet_with_empty_text(Pkt, Body) ->
 	lager:log(info, self(), "PacketHK before conversion ~p ", [Pkt]),
 	BodyTuple = lists:nth(1, Body),
-	lager:log(info, self(), "PacketHK BodyTuple ~p ", [BodyTuple]),
 	NewMessageString = "Message replaced!",
-	lager:log(info, self(), "PacketHK NewMessageString ~p ", [NewMessageString]),
-	MessageBinary = list_to_binary(NewMessageString),
-	lager:log(info, self(), "PacketHK MessageBinary ~p ", [MessageBinary]),
-	NewBodyTuple = setelement(3, BodyTuple, MessageBinary),
-	lager:log(info, self(), "PacketHK NewBodyTuple ~p ", [NewBodyTuple]),
-	NewList = [NewBodyTuple],
-	lager:log(info, self(), "PacketHK NewList ~p ", [NewList]),
-	NewPacket = setelement(8, Pkt, NewList),
+	NewPacket = setelement(8, Pkt,[setelement(3, BodyTuple, list_to_binary(NewMessageString))]),
 	lager:log(info, self(), "PacketHK after conversion ~p ", [NewPacket]),
 	NewPacket.
 
