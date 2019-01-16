@@ -109,8 +109,7 @@ parse_and_process_chat_message({#message{id = _Id, from = From, to = To, body = 
     		lager:log(info, self(), "Found contact number in the message text! Message: ~p ", [Text]),
     		NewPkt = construct_modified_packet_with_empty_text(Pkt, Body),
     		store_violated_chat(Receiver, Sender, Text),
-    		increment_violation_counter(Sender),
-    		block_user_if_exceeds_voilation(Sender, LServer),
+    		block_or_increment_violation_counter(Sender, LServer),
     		proceed_with_modified_message(NewPkt, C2SState);
     	nomatch ->
     		lager:log(info, self(), "No match found for contact number in the message!"),
@@ -148,12 +147,6 @@ sql_query_internal_silent(Query, Params) ->
     emysql:prepare(mod_log_chat_mysql5_stmt, Query),
     emysql:execute(mod_log_chat_mysql5_db, mod_log_chat_mysql5_stmt, Params).
 
-%%
-%%
-% Result = emysql:execute(pool1, <<"select bar, baz from foo">>).
-% Recs = emysql:as_record(Result, violation_counter, record_info(fields, violation_counter)).
-% Bars = [Foo#foo.bar || Foo <- Recs].
-
 get_total_violation_count(Sender) -> 
 	Query = ["SELECT * FROM ", violated_chats_counter(), " WHERE `from` = ", "?"],
 	Result = sql_query(Query, [Sender]),
@@ -168,9 +161,18 @@ get_total_violation_count(Sender) ->
 			lists:nth(1, Counter)
 	end.
 
-increment_violation_counter(Sender) ->
+block_or_increment_violation_counter(Sender, LServer) ->
 	Counter = get_total_violation_count(Sender),
 	lager:log(info, self(), "VIOLATION_COUNTER: ~p", [Counter]),
+	case Counter < 3 of 
+		true ->
+			increment_violation_counter(Sender, Counter);
+		_ ->
+			block_user_if_exceeds_voilation(Sender, LServer)
+	end.
+
+increment_violation_counter(Sender, Counter) ->
+	
 	case Counter of 
 		0 -> 
 			% Insert into violated_chats_counter table
@@ -190,7 +192,12 @@ update_violation_counter(Sender, Counter) ->
 	sql_query(Query, [Counter, Sender]),
 	ok.
 
+% Block the user from chat
+%<<"user3">>,<<"localhost">>,<<"hello">>
 block_user_if_exceeds_voilation(Sender, LServer) -> 
-	Host = element(2, application:get_env(sawerly, s_mysql_host)),
-	lager:log(info, self(), "Fetching from ENV ~p", [Host]),
+	lager:log(info, self(), "About to block the user ~p & LServer ~p", [Sender, LServer]),
+	User = list_to_binary(Sender),
+	Server = list_to_binary(LServer),
+	ReasonText = <<"Violated 3 times phone number rule in chat">>,
+	mod_admin_extra:ban_account(User, Server, ReasonText),
 	ok.
