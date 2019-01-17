@@ -103,25 +103,36 @@ parse_and_process_chat_message({#message{id = _Id, from = From, to = To, body = 
 
     %Text = fxml:get_cdata(Pkt),
     lager:log(info, self(), "From: ~p & To: ~p & message: ~p", [Sender, Receiver, Text]),
+    Parsed_Body = jiffy:decode(list_to_binary(Text), [return_maps]),
+    lager:log(info, self(), "Parsed_Body: ~p", [Parsed_Body]),
+    Message = binary_to_list(maps:get(<<"desc">>, Parsed_Body, <<"">>)),
 
-    case re:run(Text, ?MOBILE_NUMBER_REGEX) of
+	lager:log(info, self(), "Message: ~p", [Message]),
+    case re:run(Message, ?MOBILE_NUMBER_REGEX) of
     	{match, _Captured} -> 
-    		lager:log(info, self(), "Found contact number in the message text! Message: ~p ", [Text]),
+    		lager:log(info, self(), "Found contact number in the message text! Message: ~p ", [Message]),
     		NewPkt = construct_modified_packet_with_empty_text(Pkt, Body),
     		store_violated_chat(Receiver, Sender, Text),
     		block_or_increment_violation_counter(Sender, LServer),
-    		proceed_with_modified_message(NewPkt, C2SState);
+    		proceed_with_modified_message(NewPkt, C2SState, false);
     	nomatch ->
     		lager:log(info, self(), "No match found for contact number in the message!"),
-    		proceed_with_modified_message(Pkt, C2SState)
+    		proceed_with_modified_message(Pkt, C2SState, true)
     end.
 
-proceed_with_modified_message(Pkt, C2SState) ->
-	{Pkt, C2SState}.
+proceed_with_modified_message(Pkt, C2SState, ShouldProceed) ->
+	case ShouldProceed of 
+		true ->
+			{Pkt, C2SState};
+		_ ->
+			drop
+	end.
 
 construct_modified_packet_with_empty_text(Pkt, Body) ->
 	lager:log(info, self(), "PacketHK before conversion ~p ", [Pkt]),
 	BodyTuple = lists:nth(1, Body),
+
+	% {"iFromUserId":"10035","iToUserId":"10039","photoShootId":"6311","desc":"hello-test","type":"text"}
 	NewMessageString = "Message replaced!",
 	NewPacket = setelement(8, Pkt,[setelement(3, BodyTuple, list_to_binary(NewMessageString))]),
 	lager:log(info, self(), "PacketHK after conversion ~p ", [NewPacket]),
@@ -182,11 +193,13 @@ increment_violation_counter(Sender, Counter) ->
 			update_violation_counter(Sender, Counter+1)
 	end.
 
+% Insert into the counter table
 insert_violation_counter(Sender, Counter) ->
 	Query = ["INSERT INTO ", violated_chats_counter(), " (`from`, `counter`) VALUES", "(?, ?)"],
 	sql_query(Query, [Sender, Counter]),
 	ok.
 
+% Update counter
 update_violation_counter(Sender, Counter) ->
 	Query = ["UPDATE ", violated_chats_counter(), " set `counter` = ? WHERE `from` = ?"],
 	sql_query(Query, [Counter, Sender]),
